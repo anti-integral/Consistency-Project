@@ -33,15 +33,18 @@ class ResBlock(nn.Module):
         self.out_channels = out_channels
         self.use_scale_shift_norm = use_scale_shift_norm
 
+        # Ensure num_groups is valid
+        num_groups = min(num_groups, min(in_channels, out_channels))
+
         self.norm1 = AdaptiveGroupNorm(
             num_groups, in_channels, time_embed_dim,
-            use_scale_shift_norm, eps=1e-5
+            use_scale_shift_norm, use_pixel_norm=False, eps=1e-5
         )
         self.conv1 = nn.Conv2d(in_channels, out_channels, 3, padding=1)
 
         self.norm2 = AdaptiveGroupNorm(
             num_groups, out_channels, time_embed_dim,
-            use_scale_shift_norm, eps=1e-5
+            use_scale_shift_norm, use_pixel_norm=False, eps=1e-5
         )
         self.dropout = nn.Dropout(dropout)
         self.conv2 = nn.Conv2d(out_channels, out_channels, 3, padding=1)
@@ -85,7 +88,9 @@ class AttentionBlock(nn.Module):
         else:
             self.num_head_channels = num_head_channels
 
-        self.norm = nn.GroupNorm(32, channels, eps=1e-5)
+        # Ensure num_groups is valid
+        num_groups = min(32, channels)
+        self.norm = nn.GroupNorm(num_groups, channels, eps=1e-5)
         self.qkv = nn.Conv2d(channels, channels * 3, 1)
         self.proj_out = nn.Conv2d(channels, channels, 1)
 
@@ -191,39 +196,46 @@ class UNetModel(nn.Module):
         # Initial convolution
         self.conv_in = nn.Conv2d(in_channels, channels, 3, padding=1)
 
-        # Downsampling blocks
-        self.down_blocks = nn.ModuleList()
+        # Track channels for skip connections
         ch = channels
         ds = 1
-
+        
+        # Create downsampling blocks
+        self.down_blocks = nn.ModuleList()
+        # Store (module, is_downsample) tuples to track which are downsample layers
+        down_block_types = []
+        
         for level, mult in enumerate(channel_mult):
             for i in range(num_res_blocks):
-                layers = nn.ModuleList()
-
-                # Add residual block
-                layers.append(ResBlock(
-                    ch, mult * channels, time_embed_dim,
+                # ResBlock
+                out_ch = mult * channels
+                block = ResBlock(
+                    ch, out_ch, time_embed_dim,
                     dropout, use_scale_shift_norm
-                ))
-                ch = mult * channels
+                )
+                self.down_blocks.append(block)
+                down_block_types.append(('res', ch))
+                ch = out_ch
 
-                # Add attention if at correct resolution
+                # Attention
                 if ds in attention_resolutions:
-                    layers.append(AttentionBlock(
+                    att_block = AttentionBlock(
                         ch, num_heads, num_head_channels, use_checkpoint
-                    ))
+                    )
+                    self.down_blocks.append(att_block)
+                    down_block_types.append(('attn', ch))
 
-                # Add FNO block if enabled
+                # FNO
                 if use_fno and i == 0:
-                    layers.append(FourierConvBlock(ch, ch, fno_modes))
+                    fno_block = FourierConvBlock(ch, ch, fno_modes)
+                    self.down_blocks.append(fno_block)
+                    down_block_types.append(('fno', ch))
 
-                self.down_blocks.append(layers)
-
-            # Add downsampling
+            # Downsample
             if level != len(channel_mult) - 1:
-                self.down_blocks.append(nn.ModuleList([
-                    Downsample(ch, use_conv=resblock_updown)
-                ]))
+                downsample = Downsample(ch, use_conv=resblock_updown)
+                self.down_blocks.append(downsample)
+                down_block_types.append(('down', ch))
                 ds *= 2
 
         # Middle blocks
@@ -233,41 +245,58 @@ class UNetModel(nn.Module):
             ResBlock(ch, ch, time_embed_dim, dropout, use_scale_shift_norm),
         ])
 
-        # Upsampling blocks
+        # Create upsampling blocks
         self.up_blocks = nn.ModuleList()
-
+        # We need to reverse the order and match skip connections properly
+        
+        # Calculate skip channels by reversing the downsampling path
+        skip_channels = []
+        for block_type, block_ch in down_block_types:
+            if block_type != 'down':  # Don't store skip for downsample layers
+                skip_channels.append(block_ch)
+        skip_channels = list(reversed(skip_channels))
+        skip_idx = 0
+        
         for level, mult in reversed(list(enumerate(channel_mult))):
-            for i in range(num_res_blocks + 1):
-                layers = nn.ModuleList()
-
-                # Add residual block
-                layers.append(ResBlock(
-                    ch + ch, mult * channels, time_embed_dim,
-                    dropout, use_scale_shift_norm
-                ))
-                ch = mult * channels
-
-                # Add attention if at correct resolution
-                if ds in attention_resolutions:
-                    layers.append(AttentionBlock(
-                        ch, num_heads, num_head_channels, use_checkpoint
-                    ))
-
-                # Add FNO block if enabled
-                if use_fno and i == num_res_blocks:
-                    layers.append(FourierConvBlock(ch, ch, fno_modes))
-
-                self.up_blocks.append(layers)
-
-            # Add upsampling
-            if level != 0:
-                self.up_blocks.append(nn.ModuleList([
-                    Upsample(ch, use_conv=resblock_updown)
-                ]))
+            # Upsample first (except at the last level)
+            if level != len(channel_mult) - 1:
+                upsample = Upsample(ch, use_conv=resblock_updown)
+                self.up_blocks.append(upsample)
                 ds //= 2
+            
+            for i in range(num_res_blocks + 1):
+                # Get skip channel count
+                skip_ch = skip_channels[skip_idx] if skip_idx < len(skip_channels) else 0
+                skip_idx += 1
+                
+                # ResBlock with skip
+                out_ch = mult * channels
+                block = ResBlock(
+                    ch + skip_ch, out_ch, time_embed_dim,
+                    dropout, use_scale_shift_norm
+                )
+                self.up_blocks.append(block)
+                ch = out_ch
+
+                # Skip connection for attention if it was in down path
+                if ds in attention_resolutions and i < num_res_blocks:
+                    if skip_idx < len(skip_channels):
+                        skip_idx += 1
+                    att_block = AttentionBlock(
+                        ch, num_heads, num_head_channels, use_checkpoint
+                    )
+                    self.up_blocks.append(att_block)
+
+                # Skip connection for FNO if it was in down path
+                if use_fno and i == num_res_blocks and level < len(channel_mult) - 1:
+                    if skip_idx < len(skip_channels):
+                        skip_idx += 1
+                    fno_block = FourierConvBlock(ch, ch, fno_modes)
+                    self.up_blocks.append(fno_block)
 
         # Output layers
-        self.norm_out = nn.GroupNorm(32, ch, eps=1e-5)
+        num_groups = min(32, ch)
+        self.norm_out = nn.GroupNorm(num_groups, ch, eps=1e-5)
         self.conv_out = nn.Conv2d(ch, out_channels, 3, padding=1)
 
         # Initialize weights
@@ -296,17 +325,19 @@ class UNetModel(nn.Module):
 
         # Initial convolution
         h = self.conv_in(x)
-
-        # Downsampling
+        
+        # Downsampling - store features before downsampling operations
         hs = []
         for module in self.down_blocks:
-            if isinstance(module, nn.ModuleList):
-                for layer in module:
-                    if isinstance(layer, ResBlock):
-                        h = layer(h, time_emb)
-                    else:
-                        h = layer(h)
-            hs.append(h)
+            if isinstance(module, ResBlock):
+                h = module(h, time_emb)
+                hs.append(h)  # Save for skip
+            elif isinstance(module, (AttentionBlock, FourierConvBlock)):
+                h = module(h)
+                hs.append(h)  # Save for skip
+            elif isinstance(module, Downsample):
+                # Don't save downsampled features as skip
+                h = module(h)
 
         # Middle
         for layer in self.middle_blocks:
@@ -315,16 +346,20 @@ class UNetModel(nn.Module):
             else:
                 h = layer(h)
 
-        # Upsampling
+        # Upsampling - pop skip connections in reverse order
         for module in self.up_blocks:
-            if isinstance(module, nn.ModuleList):
-                # Pop skip connection
-                h = torch.cat([h, hs.pop()], dim=1)
-                for layer in module:
-                    if isinstance(layer, ResBlock):
-                        h = layer(h, time_emb)
-                    else:
-                        h = layer(h)
+            if isinstance(module, Upsample):
+                h = module(h)
+            elif isinstance(module, ResBlock):
+                # Concatenate skip connection
+                if len(hs) > 0:
+                    h = torch.cat([h, hs.pop()], dim=1)
+                h = module(h, time_emb)
+            elif isinstance(module, (AttentionBlock, FourierConvBlock)):
+                h = module(h)
+                # Pop corresponding skip if it exists
+                if len(hs) > 0 and isinstance(module, type(self.down_blocks[len(self.down_blocks) - len(hs) - 1])):
+                    hs.pop()
 
         # Output
         h = self.norm_out(h)

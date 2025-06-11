@@ -135,7 +135,7 @@ class ExponentialMovingAverage:
 
         # Create a deep copy of the model
         ema_model = copy.deepcopy(model)
-
+        
         # Apply EMA parameters
         for shadow, param in zip(
             self.shadow_params, ema_model.parameters()

@@ -24,6 +24,7 @@ class SpectralConv2d(nn.Module):
         self.scale = 1 / (in_channels * out_channels)
 
         # Complex weights for Fourier modes
+        # Note: For rfft2, the last dimension is halved + 1
         self.weights_real = nn.Parameter(
             self.scale * torch.randn(in_channels, out_channels, modes, modes)
         )
@@ -44,22 +45,32 @@ class SpectralConv2d(nn.Module):
 
         # Compute FFT
         x_ft = torch.fft.rfft2(x, norm='ortho')
-
+        
+        # Get the actual size after rfft2
+        _, _, H_fft, W_fft = x_ft.shape
+        
+        # Determine truncation sizes
+        # For rfft2: output size is (H, W//2 + 1)
+        modes_H = min(self.modes, H_fft)
+        modes_W = min(self.modes, W_fft)
+        
         # Truncate to relevant modes
-        x_ft = x_ft[..., :self.modes, :self.modes]
+        x_ft_truncated = x_ft[..., :modes_H, :modes_W]
 
-        # Multiply by weights in Fourier space
-        weights = torch.complex(self.weights_real, self.weights_imag)
+        # Adjust weights to match truncated size
+        weights_real = self.weights_real[:, :, :modes_H, :modes_W]
+        weights_imag = self.weights_imag[:, :, :modes_H, :modes_W]
+        weights = torch.complex(weights_real, weights_imag)
 
         # Einsum multiplication
-        out_ft = torch.einsum('bcxy,cdxy->bdxy', x_ft, weights)
+        out_ft = torch.einsum('bcxy,cdxy->bdxy', x_ft_truncated, weights)
 
-        # Pad back to original size
+        # Pad back to original FFT size
         out_ft_padded = torch.zeros(
-            B, self.out_channels, H, W // 2 + 1,
+            B, self.out_channels, H_fft, W_fft,
             dtype=torch.complex64, device=x.device
         )
-        out_ft_padded[..., :self.modes, :self.modes] = out_ft
+        out_ft_padded[..., :modes_H, :modes_W] = out_ft
 
         # Inverse FFT
         out = torch.fft.irfft2(out_ft_padded, s=(H, W), norm='ortho')
@@ -279,22 +290,32 @@ class SpectralConv3d(nn.Module):
 
         # Compute 3D FFT
         x_ft = torch.fft.rfftn(x, dim=[-3, -2, -1], norm='ortho')
+        
+        # Get actual FFT dimensions
+        _, _, T_fft, H_fft, W_fft = x_ft.shape
+        
+        # Determine truncation sizes
+        modes_T = min(self.modes_temporal, T_fft)
+        modes_H = min(self.modes_spatial, H_fft)
+        modes_W = min(self.modes_spatial, W_fft)
 
         # Truncate to relevant modes
-        x_ft = x_ft[..., :self.modes_temporal, :self.modes_spatial, :self.modes_spatial]
-
+        x_ft_truncated = x_ft[..., :modes_T, :modes_H, :modes_W]
+        
+        # Adjust weights to match truncated size
+        weights_real = self.weights_real[:, :, :modes_T, :modes_H, :modes_W]
+        weights_imag = self.weights_imag[:, :, :modes_T, :modes_H, :modes_W]
+        weights = torch.complex(weights_real, weights_imag)
+        
         # Complex multiplication
-        weights = torch.complex(self.weights_real, self.weights_imag)
-        out_ft = torch.einsum('bctxy,cdtxy->bdtxy', x_ft, weights)
+        out_ft = torch.einsum('bctxy,cdtxy->bdtxy', x_ft_truncated, weights)
 
         # Pad back
         out_ft_padded = torch.zeros(
-            B, self.out_channels, T, H, W // 2 + 1,
+            B, self.out_channels, T_fft, H_fft, W_fft,
             dtype=torch.complex64, device=x.device
         )
-        out_ft_padded[
-            ..., :self.modes_temporal, :self.modes_spatial, :self.modes_spatial
-        ] = out_ft
+        out_ft_padded[..., :modes_T, :modes_H, :modes_W] = out_ft
 
         # Inverse FFT
         out = torch.fft.irfftn(out_ft_padded, s=(T, H, W), dim=[-3, -2, -1], norm='ortho')
