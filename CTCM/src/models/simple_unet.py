@@ -65,6 +65,7 @@ class SimpleUNetModel(nn.Module):
 
         self.channels = channels
         self.num_res_blocks = num_res_blocks
+        self.channel_mult = channel_mult
 
         # Time embedding
         self.time_embed = nn.Sequential(
@@ -79,17 +80,22 @@ class SimpleUNetModel(nn.Module):
 
         # Downsampling path
         self.down_blocks = nn.ModuleList()
+        self.down_samples = nn.ModuleList()
+
         ch = channels
-
         for level, mult in enumerate(channel_mult):
-            out_ch = channels * mult
-
+            # Residual blocks at this resolution
             for i in range(num_res_blocks):
-                self.down_blocks.append(SimpleResBlock(ch, out_ch, time_embed_dim))
-                ch = out_ch
+                self.down_blocks.append(
+                    SimpleResBlock(ch, channels * mult, time_embed_dim)
+                )
+                ch = channels * mult
 
+            # Downsample (except at the last level)
             if level != len(channel_mult) - 1:
-                self.down_blocks.append(nn.Conv2d(ch, ch, 3, stride=2, padding=1))
+                self.down_samples.append(
+                    nn.Conv2d(ch, ch, 3, stride=2, padding=1)
+                )
 
         # Middle blocks
         self.middle_blocks = nn.ModuleList([
@@ -99,16 +105,22 @@ class SimpleUNetModel(nn.Module):
 
         # Upsampling path
         self.up_blocks = nn.ModuleList()
+        self.up_samples = nn.ModuleList()
 
         for level, mult in reversed(list(enumerate(channel_mult))):
-            out_ch = channels * mult
+            # Upsample (except at the first iteration)
+            if level != len(channel_mult) - 1:
+                self.up_samples.append(
+                    nn.ConvTranspose2d(ch, ch, 4, stride=2, padding=1)
+                )
 
+            # Residual blocks at this resolution
             for i in range(num_res_blocks + 1):
-                self.up_blocks.append(SimpleResBlock(ch + out_ch, out_ch, time_embed_dim))
-                ch = out_ch
-
-            if level != 0:
-                self.up_blocks.append(nn.ConvTranspose2d(ch, ch, 4, stride=2, padding=1))
+                in_ch = ch + channels * mult if i == 0 else channels * mult
+                self.up_blocks.append(
+                    SimpleResBlock(in_ch, channels * mult, time_embed_dim)
+                )
+            ch = channels * mult
 
         # Output layers
         self.norm_out = nn.GroupNorm(8, ch)
@@ -122,25 +134,41 @@ class SimpleUNetModel(nn.Module):
         h = self.conv_in(x)
 
         # Downsampling
-        hs = [h]
-        for layer in self.down_blocks:
-            if isinstance(layer, SimpleResBlock):
-                h = layer(h, time_emb)
-            else:
-                hs.append(h)
-                h = layer(h)
+        hs = []
+
+        # Process each resolution level
+        block_idx = 0
+        for level, mult in enumerate(self.channel_mult):
+            # Process residual blocks at this resolution
+            for i in range(self.num_res_blocks):
+                h = self.down_blocks[block_idx](h, time_emb)
+                block_idx += 1
+
+            # Save skip connection
+            hs.append(h)
+
+            # Downsample (except at the last level)
+            if level != len(self.channel_mult) - 1:
+                h = self.down_samples[level](h)
 
         # Middle
-        for layer in self.middle_blocks:
-            h = layer(h, time_emb)
+        for block in self.middle_blocks:
+            h = block(h, time_emb)
 
         # Upsampling
-        for layer in self.up_blocks:
-            if isinstance(layer, SimpleResBlock):
-                h = torch.cat([h, hs.pop()], dim=1)
-                h = layer(h, time_emb)
-            else:
-                h = layer(h)
+        block_idx = 0
+        for level, mult in reversed(list(enumerate(self.channel_mult))):
+            # Upsample (except at the first iteration)
+            if level != len(self.channel_mult) - 1:
+                h = self.up_samples[len(self.channel_mult) - level - 2](h)
+
+            # Concatenate skip connection
+            h = torch.cat([h, hs.pop()], dim=1)
+
+            # Process residual blocks at this resolution
+            for i in range(self.num_res_blocks + 1):
+                h = self.up_blocks[block_idx](h, time_emb)
+                block_idx += 1
 
         # Output
         h = self.norm_out(h)

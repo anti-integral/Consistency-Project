@@ -9,9 +9,9 @@ model:
     in_channels: 3
     out_channels: 3
     channels: 64
-    channel_mult: [1, 1, 2, 2]  # 64, 64, 128, 128
+    channel_mult: [1, 2, 2, 2]  # Results in feature maps at each level
     num_res_blocks: 2
-    attention_resolutions: [16]
+    attention_resolutions: []  # No attention for simple model
     dropout: 0.0
     use_checkpoint: false
     num_heads: 4
@@ -48,6 +48,7 @@ data:
   normalize: true
   mean: [0.5, 0.5, 0.5]
   std: [0.5, 0.5, 0.5]
+  num_workers: 4  # Add this
 
 training:
   mode: "consistency_training"
