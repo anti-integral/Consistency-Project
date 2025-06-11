@@ -1,26 +1,27 @@
-# Configuration without FNO layers to avoid dimension issues
+# Simple test configuration for CIFAR-10
+# Minimal complexity for debugging
 
 model:
   type: "NO-CTCM"
 
   backbone:
     type: "unet"
-    use_simple: false  # Use full UNet
+    use_simple: true  # Use simplified UNet
     in_channels: 3
     out_channels: 3
-    channels: 96
-    channel_mult: [1, 2, 2, 2]
-    num_res_blocks: 2
-    attention_resolutions: [16]
-    dropout: 0.1
+    channels: 64
+    channel_mult: [1, 2, 2]
+    num_res_blocks: 1
+    attention_resolutions: []
+    dropout: 0.0
     use_checkpoint: false
     num_heads: 4
     num_head_channels: 32
     use_scale_shift_norm: true
-    resblock_updown: false  # Disable resblock up/down
+    resblock_updown: false
 
   neural_operator:
-    use_fno: false  # DISABLE FNO
+    use_fno: false  # Disable FNO for simplicity
     fno_modes: 16
     fno_width: 128
     fno_layers: 4
@@ -53,19 +54,19 @@ data:
 
 training:
   mode: "consistency_training"
-  batch_size: 64
-  total_iterations: 50000
+  batch_size: 32
+  total_iterations: 1000  # Very short for testing
 
   optimizer:
     type: "adamw"
-    lr: 2e-4
+    lr: 1e-4
     betas: [0.9, 0.99]
     weight_decay: 1e-2
     eps: 1e-8
 
   lr_scheduler:
     type: "cosine"
-    warmup_steps: 2500
+    warmup_steps: 100
     min_lr: 1e-6
 
   loss:
@@ -74,10 +75,7 @@ training:
     reduction: "mean"
 
   progressive:
-    enabled: true
-    initial_discretization: 18
-    final_discretization: 640
-    doubling_iterations: 10000
+    enabled: false  # Disable for simplicity
 
   ema:
     enabled: true
@@ -87,11 +85,11 @@ training:
   gradient_clip: 1.0
 
   checkpoint:
-    save_every: 2500
-    keep_last: 3
+    save_every: 500
+    keep_last: 2
 
-  log_every: 50
-  sample_every: 500
+  log_every: 10
+  sample_every: 100
 
   distributed:
     enabled: false
@@ -102,9 +100,9 @@ sampling:
   guidance_scale: 0.0
 
 evaluation:
-  batch_size: 128
-  num_samples: 10000
-  metrics: ["fid", "is"]
+  batch_size: 64
+  num_samples: 1000
+  metrics: ["fid"]
 
 wandb:
   enabled: false
@@ -112,6 +110,6 @@ wandb:
 
 paths:
   data_dir: "./data"
-  checkpoint_dir: "./checkpoints/no_fno"
-  sample_dir: "./samples/no_fno"
-  log_dir: "./logs/no_fno"
+  checkpoint_dir: "./checkpoints/test"
+  sample_dir: "./samples/test"
+  log_dir: "./logs/test"
