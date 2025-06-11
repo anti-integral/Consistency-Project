@@ -1,0 +1,74 @@
+# Configuration for training consistency model from scratch
+# Uses advanced techniques from CTM and improved consistency training
+
+defaults:
+  - cifar10_ctcm
+
+# Override paths if not in base config
+paths:
+  data_dir: "./data"
+  checkpoint_dir: "./checkpoints"
+  sample_dir: "./samples"
+  log_dir: "./logs"
+
+training:
+  mode: "consistency_training"
+
+  # Longer training for from-scratch
+  total_iterations: 800000
+
+  # CTM-style hybrid training
+  hybrid_training:
+    enabled: true
+    # Consistency training loss
+    consistency_weight: 1.0
+    # Denoising score matching
+    dsm_weight: 0.1
+    dsm_start_iter: 100000
+    # Optional adversarial training
+    adversarial_weight: 0.0
+    adversarial_start_iter: 400000
+
+  # Multi-scale training
+  multiscale:
+    enabled: true
+    scales: [1, 2, 4]
+    scale_weights: [1.0, 0.5, 0.25]
+
+  # Advanced progressive schedule
+  progressive:
+    enabled: true
+    initial_discretization: 4
+    final_discretization: 1280
+    schedule_type: "geometric"
+    doubling_iterations: 50000
+
+  # Curriculum learning
+  curriculum:
+    enabled: true
+    noise_schedule: "cosine"
+    start_sigma: 80.0
+    end_sigma: 0.002
+    warmup_iterations: 10000
+
+  # Improved optimizer settings
+  optimizer:
+    lr: 2e-4
+    lr_schedule:
+      type: "polynomial"
+      power: 0.9
+
+  # Variance reduction
+  variance_reduction:
+    enabled: true
+    method: "control_variates"
+    baseline_momentum: 0.99
+
+  # Regularization
+  regularization:
+    spectral_norm: true
+    weight_standardization: true
+    dropout_rate: 0.1
+
+wandb:
+  tags: ["cifar10", "from_scratch", "ctm_style"]

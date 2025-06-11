@@ -1,0 +1,47 @@
+# Configuration for distilling from pre-trained diffusion model
+# Uses ECT-style efficient training
+
+defaults:
+  - cifar10_ctcm
+
+model:
+  # Load architecture from teacher
+  load_from_teacher: true
+
+training:
+  mode: "distillation"
+
+  # ECT-style fast training
+  batch_size: 256
+  total_iterations: 10000  # Much shorter training
+
+  optimizer:
+    lr: 1e-4  # Lower learning rate for fine-tuning
+
+  # Distillation settings
+  distillation:
+    teacher_checkpoint: null  # Must be provided via CLI
+    teacher_ema: true
+    temperature: 1.0
+
+    # Trajectory sampling
+    num_trajectories: 2
+    trajectory_steps: [10, 50]
+
+    # Loss weighting
+    consistency_weight: 1.0
+    trajectory_weight: 0.1
+
+  # Progressive schedule for distillation
+  progressive:
+    enabled: true
+    initial_discretization: 50
+    final_discretization: 1000
+    doubling_iterations: 2500
+
+  # Faster EMA for distillation
+  ema:
+    decay: 0.999
+
+wandb:
+  tags: ["cifar10", "distillation", "ect"]
