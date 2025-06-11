@@ -1,0 +1,119 @@
+model:
+  type: NO-CTCM
+  backbone:
+    type: unet
+    use_simple: false
+    in_channels: 3
+    out_channels: 3
+    channels: 64
+    channel_mult:
+    - 1
+    - 2
+    - 2
+    num_res_blocks: 2
+    attention_resolutions:
+    - 16
+    - 8
+    dropout: 0.0
+    use_checkpoint: false
+    num_heads: 4
+    num_head_channels: 64
+    use_scale_shift_norm: true
+    resblock_updown: true
+  neural_operator:
+    use_fno: true
+    fno_modes: 16
+    fno_width: 128
+    fno_layers: 4
+    spectral_normalization: true
+  time_conditioning:
+    type: trigflow
+    embed_dim: 256
+    positional_encoding: true
+    fourier_scale: 1.0
+    adaptive_norm: true
+    pixel_norm: true
+  consistency:
+    parameterization: v-prediction
+    sigma_data: 0.5
+    sigma_min: 0.002
+    sigma_max: 80.0
+    rho: 7.0
+data:
+  dataset: cifar10
+  image_size: 32
+  channels: 3
+  flip_prob: 0.5
+  normalize: true
+  mean:
+  - 0.5
+  - 0.5
+  - 0.5
+  std:
+  - 0.5
+  - 0.5
+  - 0.5
+  num_workers: 4
+training:
+  mode: consistency_training
+  batch_size: 32
+  total_iterations: 10000
+  optimizer:
+    type: adamw
+    lr: 0.0003
+    betas:
+    - 0.9
+    - 0.99
+    weight_decay: 0.01
+    eps: 1.0e-08
+  lr_scheduler:
+    type: cosine
+    warmup_steps: 5000
+    min_lr: 1.0e-06
+  loss:
+    type: pseudo_huber
+    c: 0.01
+    reduction: mean
+  progressive:
+    enabled: true
+    initial_discretization: 18
+    final_discretization: 1280
+    doubling_iterations: 20000
+  ema:
+    enabled: true
+    decay: 0.9999
+    update_every: 10
+  gradient_clip: 1.0
+  checkpoint:
+    save_every: 5000
+    keep_last: 5
+  log_every: 100
+  sample_every: 1000
+  distributed:
+    enabled: false
+    backend: nccl
+sampling:
+  num_steps: 1
+  solver: euler
+  guidance_scale: 0.0
+evaluation:
+  batch_size: 256
+  num_samples: 50000
+  metrics:
+  - fid
+  - is
+  - precision
+  - recall
+wandb:
+  enabled: false
+  project: neural-consistency-model
+  entity: null
+  tags:
+  - cifar10
+  - ctcm
+  - fno
+paths:
+  data_dir: ./data
+  checkpoint_dir: ./checkpoints
+  sample_dir: ./samples
+  log_dir: ./logs

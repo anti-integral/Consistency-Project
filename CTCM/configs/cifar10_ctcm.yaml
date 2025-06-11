@@ -7,6 +7,7 @@ model:
   # UNet backbone configuration
   backbone:
     type: "unet"
+    use_simple: false  # Use full UNet
     in_channels: 3
     out_channels: 3
     channels: 128
@@ -53,8 +54,12 @@ data:
   normalize: true
   mean: [0.5, 0.5, 0.5]
   std: [0.5, 0.5, 0.5]
+  num_workers: 4
 
 training:
+  # ADD THIS LINE - specify the training mode
+  mode: "consistency_training"  # or "distillation"
+
   # Basic settings
   batch_size: 128
   total_iterations: 100000
@@ -121,7 +126,7 @@ evaluation:
 
 # Weights & Biases logging
 wandb:
-  enabled: true
+  enabled: false  # Set to true if you want to use wandb
   project: "neural-consistency-model"
   entity: null  # Set your entity
   tags: ["cifar10", "ctcm", "fno"]

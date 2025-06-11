@@ -1,0 +1,118 @@
+# Medium complexity configuration for CIFAR-10
+# Good balance between quality and training speed
+
+model:
+  type: "NO-CTCM"
+
+  backbone:
+    type: "unet"
+    use_simple: false  # Use full UNet
+    in_channels: 3
+    out_channels: 3
+    channels: 96  # Moderate size (was 128)
+    channel_mult: [1, 2, 2]  # 3 levels instead of 4
+    num_res_blocks: 2
+    attention_resolutions: [16]  # Single attention level
+    dropout: 0.1
+    use_checkpoint: false
+    num_heads: 4
+    num_head_channels: 32
+    use_scale_shift_norm: true
+    resblock_updown: false
+
+  neural_operator:
+    use_fno: true  # Keep FNO enabled
+    fno_modes: 12  # Reduced from 16
+    fno_width: 96  # Reduced from 128
+    fno_layers: 2  # Reduced from 4
+    spectral_normalization: false
+
+  time_conditioning:
+    type: "trigflow"
+    embed_dim: 192  # Reduced from 256
+    positional_encoding: true
+    fourier_scale: 1.0
+    adaptive_norm: true
+    pixel_norm: false  # Disabled for faster training
+
+  consistency:
+    parameterization: "v-prediction"
+    sigma_data: 0.5
+    sigma_min: 0.002
+    sigma_max: 80.0
+    rho: 7.0
+
+data:
+  dataset: "cifar10"
+  image_size: 32
+  channels: 3
+  flip_prob: 0.5
+  normalize: true
+  mean: [0.5, 0.5, 0.5]
+  std: [0.5, 0.5, 0.5]
+  num_workers: 4
+
+training:
+  mode: "consistency_training"
+  batch_size: 64  # Reduced for memory
+  total_iterations: 50000  # Shorter training for testing
+
+  optimizer:
+    type: "adamw"
+    lr: 2e-4  # Slightly lower
+    betas: [0.9, 0.99]
+    weight_decay: 1e-2
+    eps: 1e-8
+
+  lr_scheduler:
+    type: "cosine"
+    warmup_steps: 2500
+    min_lr: 1e-6
+
+  loss:
+    type: "pseudo_huber"
+    c: 0.01
+    reduction: "mean"
+
+  progressive:
+    enabled: true
+    initial_discretization: 18
+    final_discretization: 640  # Reduced from 1280
+    doubling_iterations: 10000
+
+  ema:
+    enabled: true
+    decay: 0.999  # Slightly lower for faster adaptation
+    update_every: 10
+
+  gradient_clip: 1.0
+
+  checkpoint:
+    save_every: 2500
+    keep_last: 3
+
+  log_every: 50
+  sample_every: 500
+
+  distributed:
+    enabled: false
+
+sampling:
+  num_steps: 1
+  solver: "euler"
+  guidance_scale: 0.0
+
+evaluation:
+  batch_size: 128
+  num_samples: 10000  # Reduced for faster evaluation
+  metrics: ["fid", "is"]
+
+wandb:
+  enabled: false
+  project: "neural-consistency-model"
+
+paths:
+  data_dir: "./data"
+  checkpoint_dir: "./checkpoints/medium"
+  sample_dir: "./samples/medium"
+  log_dir: "./logs/medium"

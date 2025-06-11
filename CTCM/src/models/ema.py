@@ -4,6 +4,7 @@ Used for stable training and evaluation.
 """
 
 from typing import Optional, Union
+import copy
 
 import torch
 import torch.nn as nn
@@ -132,12 +133,8 @@ class ExponentialMovingAverage:
         if model is None:
             model = self.model
 
-        # Create a copy of the model
-        ema_model = type(model)(**{
-            k: v for k, v in model.__dict__.items()
-            if not k.startswith('_')
-        })
-        ema_model.load_state_dict(model.state_dict())
+        # Create a deep copy of the model
+        ema_model = copy.deepcopy(model)
 
         # Apply EMA parameters
         for shadow, param in zip(
