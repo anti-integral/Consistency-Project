@@ -48,10 +48,12 @@ def main(cfg_path: str):
     ema = EMA(model, decay=cfg["train"]["ema_decay"])
 
     # Optimiser
+    lr = float(cfg["train"]["lr"])
+    wd = float(cfg["train"]["weight_decay"])
     opt = optim.AdamW(
         model.parameters(),
-        lr=cfg["train"]["lr"],
-        weight_decay=cfg["train"]["weight_decay"],
+        lr=lr,
+        weight_decay=wd,
         betas=(0.9, 0.99),
     )
 
