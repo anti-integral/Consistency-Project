@@ -11,7 +11,7 @@ from .normalization import AdaGN
 # Blocks
 # ----------------------------------------------------------------------------- #
 
-def conv3x3(in_ch, out_ch):  # small helper
+def conv3x3(in_ch, out_ch):
     return nn.Conv2d(in_ch, out_ch, 3, padding=1)
 
 class ResBlock(nn.Module):
@@ -90,12 +90,12 @@ class UNet(nn.Module):
             if i != len(in_out) - 1:
                 self.downs.append(Downsample(out_ch))
 
-        # Bottleneck
+        # Bottleneck: keep as ModuleList for proper dispatch
         mid_ch = dims[-1]
-        self.mid = nn.Sequential(
+        self.mid = nn.ModuleList([
             ResBlock(mid_ch, mid_ch, time_embed_dim, dropout),
             ResBlock(mid_ch, mid_ch, time_embed_dim, dropout),
-        )
+        ])
 
         # Upsampling blocks
         self.ups = nn.ModuleList()
@@ -113,28 +113,22 @@ class UNet(nn.Module):
             nn.Conv2d(base_dim, out_channels, 3, padding=1),
         )
 
-    # ------------------------------------------------------------------ #
-    # Forward
-    # ------------------------------------------------------------------ #
     def forward(self, x: torch.Tensor, sigma: torch.Tensor):
-        """
-        x:      [B, 3, H, W]      noisy image
-        sigma:  [B] or [B, 1]     noise level (std dev) – we embed log‑sigma
-        """
-        t_emb = self.time_mlp(sigma.log())  # [B, time_embed_dim]
+        t_emb = self.time_mlp(sigma.log())
 
         h = self.init_conv(x)
         residuals = [h]
 
-        # Down
+        # Down pass
         for mod in self.downs:
-            h = mod(h, t_emb) if isinstance(mod, ResBlock) else mod(h, t_emb)
+            h = mod(h, t_emb)
             residuals.append(h)
 
-        # Mid
-        h = self.mid(h, t_emb) if isinstance(self.mid, ResBlock) else self.mid(h, t_emb)
+        # Mid pass (dispatch through each ResBlock)
+        for mod in self.mid:
+            h = mod(h, t_emb)
 
-        # Up
+        # Up pass
         for mod in self.ups:
             if isinstance(mod, Upsample):
                 h = mod(h, t_emb)
@@ -143,5 +137,5 @@ class UNet(nn.Module):
                 h = torch.cat([h, res], dim=1)
                 h = mod(h, t_emb)
 
-        # Final
+        # Output
         return self.final_block(h)
